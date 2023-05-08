@@ -44,3 +44,8 @@ class BankDetails(models.Model):
     accountNumber = models.IntegerField(primary_key=True)
     sortCode = models.TextField()
     accountName = models.TextField()
+
+
+class Currency(models.Model):
+    id = models.IntegerField(primary_key=True)
+    name = models.TextField(max_length=10)

@@ -18,14 +18,11 @@ from django.urls import path
 from api import views
 
 urlpatterns = [
-    # path('admin/', admin.site.urls, ),
-    # path('hello/', views.hello, ),
-    # path('', views.current_datetime, ),
-    # path('time/plus/<int:offset>/', views.hours_ahead),
     path('initiatePayment', views.initiate_payment),
     path('initiateRefund', views.initiate_refund),
     path('initiateCancellation', views.initiate_cancellation),
     path('requestTransactionPNS', views.request_transaction_pns),
     path('requestRefundPNS', views.request_refund_pns),
-    path('convertCurrency', views.convert_currency)
+    path('convertCurrency', views.convert_currency),
+    path('admin', admin.site.urls)
 ]
