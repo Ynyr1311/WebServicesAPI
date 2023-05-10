@@ -10,8 +10,16 @@ generic_error_messages = {
     103: "Error. One or more parameters were not of a valid type",
     104: "Error. One or more fields are invalid",
     105: "Error. This function only accepts POST requests",
-    201: "An error occurred with currency conversion.",
-    301: "An error occurred with contacting the Payment Network Service."
+    106: 'Payer card details could not be found',
+    107: 'Payee bank account details could not be found',
+    108: 'Payer personal account could not be found',
+    109: 'Payee business account details could not be found',
+    201: 'An error occurred with currency conversion.',
+    301: 'An error occurred with contacting the Payment Network Service.',
+    401: 'Could not access database.',
+    402: 'Transaction with the parameters provided could not be located.',
+    403: 'Refund could not be completed.',
+    404: 'Original transaction already refunded or cancelled.'
 }
 
 
