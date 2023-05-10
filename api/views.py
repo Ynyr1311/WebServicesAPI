@@ -234,7 +234,7 @@ def initiate_refund(request):
 
         # Gets the values from the request body
         transaction_id = request_data.get('TransactionUUID', None)
-        amount = request_data.get('Amount', None)
+        amount = request_data.get('Amount', None) # The amount they're being refunded
         currency_code = request_data.get('CurrencyCode', None)
 
         if any(value is None for value in (transaction_id, amount, currency_code)):
@@ -255,6 +255,28 @@ def initiate_refund(request):
 
             if curr_transaction.transactionStatus == "Refunded" or curr_transaction.transactionStatus == "Cancelled":
                 return error_response(response_data, 404)
+
+            # If the currency that we want a refund in is not the same that was carried out for the transaction
+            if curr_transaction.currency != currency_code:
+                # Creates the request body
+                currency_converter_request = {
+                    'CurrencyFrom': currency_code,
+                    'CurrencyTo': curr_transaction.currency,
+                    'Date': date.today(),
+                    'Amount': amount
+                }
+
+                # Calls the function to get the new currency value
+                currency_converter_response = convert_currency(currency_converter_request)
+
+                # If everything is valid, then set the amount to the new value
+                if currency_converter_response.status_code == 200:
+                    amount = currency_converter_response["Amount"]
+
+                else:
+                    return error_response(response_data, 201)
+
+
             # Sends a request to the PNS
 
             # pns_response = request_refund_pns(request)
@@ -264,10 +286,18 @@ def initiate_refund(request):
             status = pns_response.get('StatusCode', None)
             comment = pns_response.get('Comment', None)
 
-            # If the transaction was ok (200) then set the status to refunded
+
+            # If the transaction was ok, then set the status to refunded, and create a new transaction detailing how
+            # much was refunded (which is in a negative value).
             if status == 200:
+                new_transaction = Transaction(payer=curr_transaction.payer, payee=curr_transaction.payee,
+                                              amount=-amount,
+                                              currency=curr_transaction.currency, date=curr_transaction.date,
+                                              transactionStatus="Refund Transaction")
+
                 curr_transaction.transactionStatus = "Refunded"
                 curr_transaction.save()
+                new_transaction.save()
                 response_data['Comment'] = comment  # change to the proper error code
                 return JsonResponse(response_data, status=200)
 
