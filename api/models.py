@@ -29,7 +29,7 @@ class Transaction(models.Model):
     payee = models.ForeignKey('BusinessAccount', on_delete=models.CASCADE)
     amount = models.FloatField()
     currency = models.TextField()
-    date = models.DateTimeField()
+    date = models.DateField()
     transactionStatus = models.TextField()
 
 
@@ -37,7 +37,7 @@ class PaymentDetails(models.Model):
     paymentId = models.IntegerField(primary_key=True)
     cardNumber = models.TextField()
     securityCode = models.TextField()
-    expiryDate = models.DateTimeField()
+    expiryDate = models.DateField()
 
 
 class BankDetails(models.Model):
