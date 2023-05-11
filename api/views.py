@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import date, datetime
 
@@ -6,7 +7,7 @@ from django.db import DatabaseError
 from django.http import JsonResponse
 from email_validator import validate_email, EmailNotValidError
 
-from api.functions import check_valid_request, error_response
+from api.functions import check_valid_request, error_response, error_response_external
 from api.models import Transaction, PaymentDetails, BankDetails, BusinessAccount, PersonalAccount
 
 
@@ -173,32 +174,31 @@ def initiate_payment(request):
                 currency_converter_request = {
                     'CurrencyFrom': payer_currency_code,
                     'CurrencyTo': payee_currency_code,
-                    'Date': curr_date,
+                    'Date': str(curr_date),
                     'Amount': amount
                 }
-
-                # Calls the function to get the new currency value
-                currency_converter_response = convert_currency(currency_converter_request)
+                json_object = json.dumps(currency_converter_request)
+                # Calls the function to get the new currency value (converts the request to JSON too)
+                currency_converter_response = convert_currency(json_object)
 
                 # If everything is valid, then set the amount to the new value
                 if currency_converter_response.status_code == 200:
                     request['amount'] = currency_converter_response["Amount"]
+                    amount = request['amount']
 
                 else:
-                    return error_response(response_data, 201)
+                    return JsonResponse(currency_converter_response, status=400)
 
             # Create a new transaction object, will only save once the payment has gone through
 
-            new_transaction = Transaction(payer=payer_object, payee=payee_object, amount=request['amount'],
+            new_transaction = Transaction(payer=payer_object, payee=payee_object, amount=amount,
                                           currency=payee_currency_code, date=curr_date, transactionStatus="Completed")
 
-            """
-            response = request_transaction_pns(request)
+            pns_response = request_transaction_pns(request)
 
-            if response.status_code != 200:
-                return error_response(response_data, 301)
+            if pns_response.status_code != 200:
+                return JsonResponse(pns_response, status=400)
 
-            """
             # Save the transaction now that it has been completed
             new_transaction.save()
             response_data["Comment"] = "Payment Successfully Completed"
@@ -217,10 +217,10 @@ def initiate_refund(request):
         'ErrorCode': None,
         'Comment': ""
     }
-    temp = {  # remove
-        'StatusCode': 200,
-        'Comment': "Success"
-    }
+
+    # The regex to check the currency code is valid
+    currency_code_regex = "^[0-9]{3}$"
+    compiled_currency_code_regex = re.compile(currency_code_regex)
 
     # A function which checks if the response is not empty and can be converted to JSON
     request_data = check_valid_request(request, response_data)
@@ -237,6 +237,7 @@ def initiate_refund(request):
         amount = request_data.get('Amount', None)  # The amount they're being refunded
         currency_code = request_data.get('CurrencyCode', None)
 
+        # Throws an error if any values are not present
         if any(value is None for value in (transaction_id, amount, currency_code)):
             return error_response(response_data, 102)
 
@@ -248,6 +249,9 @@ def initiate_refund(request):
 
         if not isinstance(amount, float) or amount <= 0:
             return error_response(response_data, 104, "Error. Amount must be a float value larger than 0")
+
+        if not re.search(compiled_currency_code_regex, currency_code):
+            return error_response(response_data, 104, "Error. The currency code provided is not in the correct format")
 
         try:
             # transaction will already exist from initial payment
@@ -274,19 +278,18 @@ def initiate_refund(request):
                     amount = currency_converter_response["Amount"]
 
                 else:
-                    return error_response(response_data, 201)
+                    return JsonResponse(currency_converter_response, status=400)
+
+            if amount > curr_transaction.amount:
+                return error_response(response_data, 104, "Error. The amount requested was greater than the total fee "
+                                                          "of your booking.")
 
             # Sends a request to the PNS
-            # pns_response = request_refund_pns(request)
-            pns_response = temp
-            # Gets the status code and the comment
-            # probably get the error code too
-            status = pns_response.get('StatusCode', None)
-            comment = pns_response.get('Comment', None)
+            pns_response = request_refund_pns(request)
 
             # If the transaction was ok, then set the status to refunded, and create a new transaction detailing how
             # much was refunded (which is in a negative value).
-            if status == 200:
+            if pns_response.status_code == 200:
                 new_transaction = Transaction(payer=curr_transaction.payer, payee=curr_transaction.payee,
                                               amount=-amount,
                                               currency=curr_transaction.currency, date=curr_transaction.date,
@@ -295,17 +298,18 @@ def initiate_refund(request):
                 curr_transaction.transactionStatus = "Refunded"
                 curr_transaction.save()
                 new_transaction.save()
-                response_data['Comment'] = comment  # change to the proper error code
+                response_data['Comment'] = "Refund Successful"  # change to the proper error code
                 return JsonResponse(response_data, status=200)
-
             else:
-                return error_response(response_data, 301, comment)
+                # Else it will pass along the error message from the PNS along with our relevant error code
+                return JsonResponse(pns_response, status=400)
 
         # Will produce the appropriate error code if we can't find the transaction
         except Transaction.DoesNotExist:
             return error_response(response_data, 402)
 
     else:
+        # If it isn't a POST request
         return error_response(response_data, 105)
 
 
@@ -324,38 +328,47 @@ def initiate_cancellation(request):
 
     # Else, we have converted the request into JSON properly, so we can continue
 
+    # Checks if it is a POST method
     if request.method == 'POST':
 
         transaction_id = request_data.get('TransactionUUID', None)
 
+        # Checks a TransactionUUID was provided
         if transaction_id is None:
             return error_response(response_data, 102, "Error. No transaction ID was provided")
 
+        # Checks the transaction ID is a positive integer
         if not isinstance(transaction_id, int) or transaction_id < 0:
-            # The error if the transaction ID was not of uint
             return error_response(response_data, 103, "Error. Transaction ID needs to be a positive integer")
 
         try:
-            # Gets the transaction ID and converts it to uint type
-
+            # Finding the transaction we want to cancel
             cancel_transaction = Transaction.objects.get(id=transaction_id)
 
+            # Return an error if the transaction is already refunded or cancelled
             if cancel_transaction.transactionStatus == "Refunded" or cancel_transaction.transactionStatus == "Cancelled":
                 return error_response(response_data, 404)
 
-            cancel_transaction.transactionStatus = "Cancelled"
+            # When refunding, we create a new transaction detailing how much was refunded. These have a status of
+            # 'Refund Transaction'. We give a more specific error for this.
+            if cancel_transaction.transactionStatus == "Refund Transaction":
+                return error_response(response_data, 404,
+                                      "Error. The transaction ID provided is for a refund transaction")
 
+            # Updating and saving the transaction status
+            cancel_transaction.transactionStatus = "Cancelled"
             cancel_transaction.save()
 
             # Updates response with a valid status code and comment
             response_data['Comment'] = "Cancellation Successful"
             return JsonResponse(response_data, status=200)
 
-        # Throws an error if the transaction supplied does not exist
+        # Throws an error if the transaction we're trying to find using the ID supplied does not exist
         except Transaction.DoesNotExist:
             return error_response(response_data, 402)
 
     else:
+        # Return an error if it's not a POST request
         return error_response(response_data, 105)
 
 
@@ -365,43 +378,38 @@ def request_transaction_pns(request):
         'ErrorCode': None,
         'Comment': ""
     }
-    temp = {
-        'StatusCode': 200,
-        'Comment': "Success"
-    }
 
-    pns_url = "..."
+    # The URL of the PNS
+    pns_url = " http://samshepherd.eu.pythonanywhere.com/pns/initiatetransactionpns/"
 
     # A function which checks if the response is not empty and can be converted to JSON
     request_data = check_valid_request(request, response_data)
 
     if isinstance(request_data, JsonResponse):
-        return request_data  # Will be a JSON response of the error
+        return request_data  # Will be a JSON response of the error, otherwise we continue
 
-    if request.method == 'POST':
+    # Remove the arguments the PNS doesn't need
+    request_data.pop('PayerCurrencyCode')
+    request_data.pop('RecipientName')
+    request_data.pop('Email')
 
-        request_data.pop('PayerCurrencyCode')
-        request_data.pop('RecipientName')
-        request_data.pop('Email')
+    # Change the name of some keys to match what the PNS expects
+    request_data['HolderName'] = request_data.pop('CardHolderName')
+    request_data['BillingAddress'] = request_data.pop('CardHolderAddress')
+    request_data['CurrencyCode'] = request_data.pop('PayeeCurrencyCode')
+    request_data['AccountNumber'] = request_data.pop('PayeeBankAccNum')
+    request_data['Sort-Code'] = request_data.pop('PayeeBankSortCode')
 
-        request_data['HolderName'] = request_data.pop('CardHolderName')
-        request_data['BillingAddress'] = request_data.pop('CardHolderAddress')
-        request_data['CurrencyCode'] = request_data.pop('PayeeCurrencyCode')
-        request_data['AccountNumber'] = request_data.pop('PayeeBankAccNum')
-        request_data['Sort-Code'] = request_data.pop('PayeeBankSortCode')
+    # Send a POST request with this data to the PNS
+    pns_response = requests.post(pns_url, data=request_data)
 
-        # response = requests.post(pns_url, data=pns_request_data)
-        response = temp
+    # Return our error code and their comment if the request was not OK
+    if pns_response.status_code != 200:
+        return error_response_external(pns_response, response_data, 301)
 
-        # if response.status_code != 200:
-        # return error_response(response_data, 301)
-        if temp['StatusCode'] != 200:
-            return error_response(response_data, 301)
-
-        response_data['Comment'] = "PNS Payment Successful"
-        return JsonResponse(response_data, status=200)
-    else:
-        return error_response(response_data, 105)
+    # Else, return an OK response
+    response_data['Comment'] = "PNS Payment Successful"
+    return JsonResponse(response_data, status=200)
 
 
 def request_refund_pns(request):
@@ -411,19 +419,20 @@ def request_refund_pns(request):
         'Comment': ""
     }
 
-    pns_url = "..."
+    # URL of the PNS
+    pns_url = " http://samshepherd.eu.pythonanywhere.com/pns/initiatetransactionpns/"
 
-    if request.method == 'POST':
+    # We don't alter any data, and have already checked it in initiate_refund, so we can pass it on.
+    pns_response = requests.post(pns_url, data=request)
 
-        response = requests.post(pns_url, data=request)
+    # Returns our error code and their comment if request was not 200
+    if pns_response.status_code != 200:
+        return error_response_external(pns_response, response_data, 301)
 
-        if response.status_code != 200:
-            return error_response(response_data, 301)
+    # Else, the refund was successful
+    response_data['Comment'] = "PNS Refund Successful"
 
-        response_data['Comment'] = "PNS Refund Successful"
-        return JsonResponse(response_data, status=200)
-    else:
-        return error_response(response_data, 105)
+    return JsonResponse(response_data, status=200)
 
 
 def convert_currency(request):
@@ -433,47 +442,25 @@ def convert_currency(request):
         'Comment': "",
         'Amount': None
     }
-    temp = {  # DELETE LATER
-        'StatusCode': 200,
-        'ErrorCode': None,
-        'Comment': "Success",
-        'Amount': 200
-    }
 
     # The URL to access the currency converter endpoint
-    currency_url = 'endpoint'
+    currency_url = ' http://samshepherd.eu.pythonanywhere.com/currency/convert/'
 
     # A function which checks if the response is not empty and can be converted to JSON
-    request_data = check_valid_request(request, response_data)
 
-    if isinstance(request_data, JsonResponse):
-        return request_data  # Will be a JSON response of the error
+    # Sends a POST request to the currency converter
+    currency_response = requests.post(currency_url, data=request)
 
-    # Else, we have converted the request into JSON properly, so we can continue
+    # Gets the status code of the request, if it was valid, then extract the new amount,
+    # else, produce the correct error code
+    if currency_response.status_code != 200:
+        return error_response_external(currency_response, response_data, 201)
 
-    if request.method == 'POST':
+    # We get the amount from the response body and ensure we send it back.
+    response_body = json.loads(currency_response.text)
+    print(response_body)
 
-        # Get the data from the request
-        currency_code_from = request_data.get('CurrencyFrom', None)
-        currency_code_to = request_data.get('CurrencyTo', None)
-        amount = request_data.get('Amount', None)
-        date = request_data.get('Date', None)
+    response_data['Amount'] = response_body['Amount']
+    response_data['Comment'] = "Conversion Successful"
 
-        # Sends a POST request to the currency converter
-        # currency_response = request.post(currency_url, data=request)
-        currency_response = temp
-        # Gets the status code of the request, if it was valid, then extract the new amount,
-        # else, produce the correct error code
-        curr_converter_status = currency_response.get('StatusCode', None)
-
-        if curr_converter_status == 200:
-            response_data.update({
-                'ErrorCode': None,
-                'Comment': currency_response.get('Comment'),
-                'Amount': currency_response.get('Amount')
-            })
-            return JsonResponse(response_data, status=200)
-
-        return error_response(response_data, 201)
-    else:
-        return error_response(response_data, 105)
+    return JsonResponse(response_data, status=200)
