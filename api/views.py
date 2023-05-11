@@ -255,10 +255,16 @@ def initiate_refund(request):
 
         try:
             # transaction will already exist from initial payment
-            curr_transaction = Transaction.objects.get(id=transaction_id, currency=currency_code)
+            curr_transaction = Transaction.objects.get(id=transaction_id)
 
             if curr_transaction.transactionStatus == "Refunded" or curr_transaction.transactionStatus == "Cancelled":
                 return error_response(response_data, 404)
+
+            # When refunding, we create a new transaction detailing how much was refunded. These have a status of
+            # 'Refund Transaction'. We give a more specific error for this.
+            if curr_transaction.transactionStatus == "Refund Transaction":
+                return error_response(response_data, 404,
+                                      "Error. The transaction ID provided is for a refund transaction")
 
             # If the currency that we want a refund in is not the same that was carried out for the transaction
             if curr_transaction.currency != currency_code:
