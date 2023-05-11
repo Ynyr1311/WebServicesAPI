@@ -234,7 +234,7 @@ def initiate_refund(request):
 
         # Gets the values from the request body
         transaction_id = request_data.get('TransactionUUID', None)
-        amount = request_data.get('Amount', None) # The amount they're being refunded
+        amount = request_data.get('Amount', None)  # The amount they're being refunded
         currency_code = request_data.get('CurrencyCode', None)
 
         if any(value is None for value in (transaction_id, amount, currency_code)):
@@ -276,16 +276,13 @@ def initiate_refund(request):
                 else:
                     return error_response(response_data, 201)
 
-
             # Sends a request to the PNS
-
             # pns_response = request_refund_pns(request)
             pns_response = temp
             # Gets the status code and the comment
             # probably get the error code too
             status = pns_response.get('StatusCode', None)
             comment = pns_response.get('Comment', None)
-
 
             # If the transaction was ok, then set the status to refunded, and create a new transaction detailing how
             # much was refunded (which is in a negative value).
@@ -387,18 +384,17 @@ def request_transaction_pns(request):
         request_data.pop('RecipientName')
         request_data.pop('Email')
 
-
         request_data['HolderName'] = request_data.pop('CardHolderName')
         request_data['BillingAddress'] = request_data.pop('CardHolderAddress')
         request_data['CurrencyCode'] = request_data.pop('PayeeCurrencyCode')
         request_data['AccountNumber'] = request_data.pop('PayeeBankAccNum')
         request_data['Sort-Code'] = request_data.pop('PayeeBankSortCode')
 
-        #response = requests.post(pns_url, data=pns_request_data)
+        # response = requests.post(pns_url, data=pns_request_data)
         response = temp
 
-        #if response.status_code != 200:
-            #return error_response(response_data, 301)
+        # if response.status_code != 200:
+        # return error_response(response_data, 301)
         if temp['StatusCode'] != 200:
             return error_response(response_data, 301)
 
@@ -457,13 +453,11 @@ def convert_currency(request):
 
     if request.method == 'POST':
 
-
         # Get the data from the request
         currency_code_from = request_data.get('CurrencyFrom', None)
         currency_code_to = request_data.get('CurrencyTo', None)
         amount = request_data.get('Amount', None)
         date = request_data.get('Date', None)
-
 
         # Sends a POST request to the currency converter
         # currency_response = request.post(currency_url, data=request)
@@ -483,4 +477,3 @@ def convert_currency(request):
         return error_response(response_data, 201)
     else:
         return error_response(response_data, 105)
-
