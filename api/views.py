@@ -187,7 +187,7 @@ def initiate_payment(request):
                     amount = request['amount']
 
                 else:
-                    return JsonResponse(currency_converter_response, status=400)
+                    return currency_converter_response
 
             # Create a new transaction object, will only save once the payment has gone through
 
@@ -197,7 +197,7 @@ def initiate_payment(request):
             pns_response = request_transaction_pns(request)
 
             if pns_response.status_code != 200:
-                return JsonResponse(pns_response, status=400)
+                return pns_response
 
             # Save the transaction now that it has been completed
             new_transaction.save()
@@ -278,7 +278,8 @@ def initiate_refund(request):
                     amount = currency_converter_response["Amount"]
 
                 else:
-                    return JsonResponse(currency_converter_response, status=400)
+                    # Returns the valid error code and message
+                    return currency_converter_response
 
             if amount > curr_transaction.amount:
                 return error_response(response_data, 104, "Error. The amount requested was greater than the total fee "
@@ -302,7 +303,7 @@ def initiate_refund(request):
                 return JsonResponse(response_data, status=200)
             else:
                 # Else it will pass along the error message from the PNS along with our relevant error code
-                return JsonResponse(pns_response, status=400)
+                return pns_response
 
         # Will produce the appropriate error code if we can't find the transaction
         except Transaction.DoesNotExist:
@@ -453,6 +454,7 @@ def convert_currency(request):
 
     # Gets the status code of the request, if it was valid, then extract the new amount,
     # else, produce the correct error code
+    print(currency_response.status_code)
     if currency_response.status_code != 200:
         return error_response_external(currency_response, response_data, 201)
 
